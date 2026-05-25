@@ -12,6 +12,7 @@ category: development
 - **데이터 연동 방식 진단 및 결정**: 공식 API가 없는 척박한 병원 환경을 고려하여, 에이전트의 데이터 획득 경로를 최적의 전술로 진단 및 설계합니다.
 - **대표님의 아이디어 구상화**: 비정형적인 요구사항을 수집하여 실제 AI 에이전트가 실행 가능한 **System Instruction(프롬프트)**과 **도구(Tools - API/SQL/File/OCR)** 목록으로 구체화합니다.
 - **안정적인 SDK 규격 준수**: Google ADK의 `Agent`, `Runner`, `InMemorySessionService` 규격을 충족하는 파이썬 코드를 무결점으로 생성합니다.
+- **비용 효율적인 하이브리드 아키텍처 적용**: 토큰 사용량이 많은 멀티 에이전트 환경에서 API 요금을 최소화하기 위한 모델 분할 매핑 기술을 적용합니다.
 
 ## 트리거 (Trigger)
 - "새로운 에이전트 만들어줘"
@@ -51,6 +52,33 @@ graph TD
 
 ---
 
+## 💸 [요금 최적화] 하이브리드 아키텍처 설계 지침
+
+멀티 에이전트 시스템은 여러 차례 의사소통 및 도구 호출을 거치며 다량의 토큰을 소비하므로, 다음의 아키텍처 설계를 필수적으로 반영하여 빌드합니다.
+
+### 1. 역할 분할 모델 라우팅 (Hybrid Model Routing)
+- **오케스트레이터(마스터 사령관)**: 고성능 추론과 정교한 상황 인지, 태스크 라우팅을 수행하므로 **`gemini-2.5-pro`** 모델로 구성합니다.
+- **실무 요원(Sub-Agents & Tools)**: 엑셀 읽기, SQL 조회 결과 가공, 화면 OCR 텍스트 분석, 메일 초안 작성 등 정해진 규격의 로우 데이터를 핸들링하는 단순 연산 요원들은 10배 이상 저렴하고 빠른 **`gemini-2.5-flash`** 모델로 구성합니다.
+
+```
+                  ┌───────────────────────────────┐
+                  │   hospital_orchestrator       │ ──► gemini-2.5-pro (스마트 사령관)
+                  └───────────────────────────────┘
+                                  │
+                  ┌───────────────┴───────────────┐
+                  ▼                               ▼
+     ┌────────────────────────┐      ┌────────────────────────┐
+     │     billing_helper     │      │     document_writer    │ ──► gemini-2.5-flash (실무 요원)
+     └────────────────────────┘      └────────────────────────┘
+```
+
+### 2. 토큰 이코노미 규칙 (Token Economy Rules)
+1. **DB 조회 개수 제한**: DB 조회 시 `SELECT *` 대신 명시적인 컬럼만 요청하고, 쿼리문 뒤에 `LIMIT 20` 혹은 `TOP 20`을 붙여 모델로 전송되는 데이터 양을 억제합니다.
+2. **파이썬 전처리 기법 사용**: 엑셀이나 CSV 파일을 에이전트에 통째로 넘겨 요약해달라고 하지 않고, 파이썬 `pandas` 코드 단에서 먼저 필터링 및 통계(Sum, Mean) 처리를 한 후 핵심 텍스트 요약본만 에이전트에 공급합니다.
+3. **콘텍스트 캐싱(Context Caching) 활용**: 병원 규정, 약어 사전, EMR 스키마 기술서 등 반복 참조되는 32k 토큰 이상의 대용량 고정 데이터는 Gemini API의 Context Caching 기능을 활성화하여 호출당 입력 비용을 90% 이상 세이브합니다.
+
+---
+
 ## 🔄 인터랙티브 빌드 워크플로우 3단계 (Tiki-Taka Workflow)
 
 ### [Phase 1] 연동 진단 및 정보 수집 (Tiki-Taka Phase 1)
@@ -71,12 +99,13 @@ graph TD
    - **DB**: DB Type, Host, Port, Database, Table, Columns, Query.
    - **Excel Interceptor**: 감시 대상 폴더 경로, 감시 파일명 패턴, 필요한 데이터 컬럼명.
    - **OCR**: 캡처/스캔본 제공 주기, 추출해야 하는 텍스트 정보 필드 목록.
-2. **System Instruction**: 에이전트가 어떤 상황에서 도구를 사용해야 하는지 명확히 한글 주석을 포함하여 정의합니다.
-3. **확인**: *"대표님, 이 연동 스펙과 프롬프트 지침으로 파이썬 코딩을 진행해도 될까요?"*
+2. **하이브리드 비용 모델 매핑 설계**:
+   - 사령관과 실무 요원의 모델 분할 지정 (`pro` vs `flash`) 내용 확인.
+3. **확인**: *"대표님, 이 요금 최적화 연동 스펙과 프롬프트 지침으로 파이썬 코딩을 진행해도 될까요?"*
 
 ### [Phase 3] Code Generation & Setup Guide (코드 최종 출력 및 테스트 배포)
 대표님이 승인하면, ADK 규격에 맞는 **완성형 파이썬 스크립트**를 작성하고 실행법을 대령합니다.
-1. **단독 실행 가능한 완성형 코드**: `Agent`, `Runner` 객체가 정상 결합되어 로컬 터미널에서 즉시 실행해 볼 수 있는 스크립트.
+1. **하이브리드 모델 라우팅이 적용된 파이썬 코드**: 사령관은 `pro`로, 실무 요원 및 도구는 `flash`로 지정된 완성형 코드.
 2. **모의 데이터(Mock Data) 혹은 스텁(Stub) 코드**: 실제 환경이 갖춰지지 않은 상태에서도 테스트할 수 있도록 Mocking 처리된 도구 함수 구현.
 3. **실행 환경 및 의존성 패키지 설치 방법**: `pip install` 명령어 등 필요한 환경 설정 제시.
 
@@ -128,12 +157,17 @@ def query_emr_db(sql_query: str) -> list:
     try:
         with pyodbc.connect(conn_str, timeout=3) as conn:
             with conn.cursor() as cursor:
+                # [비용 절감 규칙] 무리한 전체 조회를 막기 위해 쿼리에 LIMIT가 없는 경우 강제 적용
+                query_lower = sql_query.lower()
+                if "select" in query_lower and "limit" not in query_lower and "top" not in query_lower:
+                    sql_query = f"{sql_query} LIMIT 20"
+                    
                 cursor.execute(sql_query)
                 columns = [column[0] for column in cursor.description]
                 results = []
                 for row in cursor.fetchall():
                     results.append(dict(zip(columns, row)))
-                return results[:20] # 토큰 제한을 고려한 제한 조회
+                return results
     except Exception as e:
         return [{"error": f"DB 쿼리 중 오류 발생: {str(e)}"}]
 ```
@@ -156,16 +190,30 @@ class ExcelHandler(FileSystemEventHandler):
             self.callback(event.src_path)
 
 def process_exported_excel(file_path: str) -> dict:
-    """다운로드된 EMR 엑셀 보고서를 자동으로 읽어 핵심 데이터를 파싱하는 도구."""
+    """다운로드된 EMR 엑셀 보고서를 자동으로 읽어 핵심 데이터를 파싱하는 도구.
+    
+    [비용 절감 규칙] 엑셀 행을 무작정 올리지 않고 Pandas로 먼저 요약 가공하여 리턴합니다.
+    """
     try:
         # 데이터프레임 로드
         df = pd.read_excel(file_path) if file_path.endswith('.xlsx') else pd.read_csv(file_path)
-        # 특정 컬럼 파싱 및 요약 로직
+        
+        # 1. 원본 전체 전송 대신 핵심 통계 계산
+        total_rows = len(df)
+        columns_list = list(df.columns)
+        
+        # 예시: 특정 키 컬럼이 있는 경우 요약
+        summary_stats = {}
+        if '진료비' in df.columns:
+            summary_stats['총_진료비_합계'] = int(df['진료비'].sum())
+            summary_stats['평균_진료비'] = int(df['진료비'].mean())
+            
         summary = {
             "file_name": os.path.basename(file_path),
-            "total_rows": len(df),
-            "columns": list(df.columns),
-            "preview": df.head(3).to_dict(orient="records")
+            "total_rows": total_rows,
+            "columns": columns_list,
+            "statistics": summary_stats,
+            "preview_top3": df.head(3).to_dict(orient="records") # 상위 3개 행만 전송
         }
         return summary
     except Exception as e:
@@ -193,6 +241,7 @@ def analyze_screenshot_ocr(image_path: str) -> str:
         with open(image_path, "rb") as f:
             image_bytes = f.read()
             
+        # [비용 절감 규칙] 비교적 토큰 가격이 훨씬 저렴한 2.5-flash 모델 사용 강제
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=[
@@ -207,8 +256,48 @@ def analyze_screenshot_ocr(image_path: str) -> str:
 
 ---
 
+## 💻 하이브리드 멀티 에이전트 결합 파이썬 코드 예시
+
+```python
+from google.adk.agents import Agent
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
+import os
+
+# 비용 모델 매핑 정의
+PRO_MODEL = "gemini-2.5-pro"
+FLASH_MODEL = "gemini-2.5-flash"
+
+# 1. 실무 요원 (Flash 적용으로 비용 90% 세이브)
+billing_helper = Agent(
+    name="billing_helper",
+    model=FLASH_MODEL, # ◀ Flash 모델 탑재
+    description="환자 내원 정보 및 도수치료 횟수를 저렴하고 신속하게 조회하는 요원",
+    instruction="환자 내원 횟수를 조회하여 수치 데이터를 정제하세요.",
+    tools=[...]
+)
+
+document_writer = Agent(
+    name="document_writer",
+    model=FLASH_MODEL, # ◀ Flash 모델 탑재
+    description="정량 보행 보고서 데이터를 참조하여 문서를 작성하는 요원",
+    instruction="정량 데이터를 기반으로 기계적인 템플릿 보고서를 빠르게 작성하세요."
+)
+
+# 2. 마스터 오케스트레이터 (Pro 적용으로 정교한 라우팅)
+hospital_orchestrator = Agent(
+    name="hospital_orchestrator",
+    model=PRO_MODEL, # ◀ Pro 모델 탑재 (복잡한 분기 판단)
+    description="대표 병원 실무 지원 마스터 사령관",
+    instruction="사용자의 명령을 분석하여 실무 에이전트(billing_helper, document_writer)에게 태스크를 라우팅하세요.",
+    sub_agents=[billing_helper, document_writer]
+)
+```
+
+---
+
 ## 🎭 루카(Luca) 본부장의 멘탈 모델 (Mental Model for Luca)
+- **비용 최우선 권장**: 에이전트를 만들고자 할 때 반드시 요금 효율적인 **Pro + Flash 하이브리드 아키텍처**를 기본 설계안으로 대표님께 추천해야 합니다.
 - **현실성 우선**: EMR의 폐쇄성을 늘 인지하고, 대표님이 무리하게 API 방식을 고수하려 하더라도 **"엑셀 내보내기 낚아채기(Excel Interceptor)"** 또는 **"OCR 방식"**의 실용적 대안을 적극적으로 먼저 권유해야 합니다.
 - **안전한 SQL 전파**: DB 방식을 논의할 때, 반드시 **Read-Only(조회 전용) 계정 사용** 및 쿼리 복잡성(운영 DB 성능 영향 최소화)을 검증하도록 경고 지침을 명시합니다.
 - **점진적 상세화**: 한 번에 코드를 다 짜려고 성급히 덤비지 마십시오. API 스펙과 DB 정보가 부족하면 *"대표님, 이 API의 필수 파라미터는 무엇인가요?"* 혹은 *"조회할 테이블의 스키마(컬럼명)를 올려주십시오"* 라고 집요하면서도 정중하게 티키타카를 이끌어가야 합니다.
-- **문서화 지향**: 생성된 에이전트 코드는 가급적 실습 파일(`*.py`) 형태로 워크스페이스에 생성해 두고 대표님이 직접 실행하실 수 있게 경로를 제공하십시오.
