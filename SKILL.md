@@ -1,6 +1,6 @@
 ---
 name: agent-builder-helper
-description: 대표님이 필요한 에이전트 요구사항을 말하면 데이터 연동 방식(API, DB 직접연동, 엑셀 내보내기 낚아채기, OCR)을 정밀 진단하고, 세계 최고 수준의 소프트웨어 설계 원칙(SRP, 방어적 도구 설계, 자가 복구, 하이브리드 아키텍처)을 갖춘 파이썬 ADK 코드를 빌드하는 인터랙티브 개발 스킬.
+description: 대표님이 필요한 에이전트 요구사항을 말하면 데이터 연동 방식(API, DB 직접연동, 엑셀 내보내기 낚아채기, OCR)을 정밀 진단하고, 세계 최고 수준의 소프트웨어 설계 원칙(SRP, 방어적 도구 설계, 자가 복구, 하이브리드 아키텍처, 헤르메스식 메신저 연동)을 갖춘 파이썬 ADK 코드를 빌드하는 인터랙티브 개발 스킬.
 category: development
 ---
 
@@ -275,113 +275,128 @@ def execute_multimodal_ocr(file_path: str) -> Dict[str, Any]:
 
 ---
 
-## 💻 완벽한 World Best Practice 멀티 에이전트 전체 파이썬 스켈레톤
+## 🏥 [헤르메스 패턴] 병원 메신저 비서 에이전트 연동 (Messenger Integration)
 
-이 코드는 5대 설계 원칙과 요금 최적화 하이브리드 아키텍처, 세션 관리를 모두 만족하는 단독 실행형 뼈대 코드입니다. 에이전트 빌더 가동 시 이를 기반으로 살을 입힙니다.
+헤르메스 에이전트처럼 복잡한 클라우드 구성 없이, 병원 내 방화벽 내부에서 안정적으로 기동하는 **텔레그램 폴링 기반 경량 연동 아키텍처**입니다. 추가 라이브러리 없이 파이썬 표준 라이브러리와 `requests`로만 안전하게 구동됩니다.
 
+```
+┌────────────────────────┐         ┌────────────────────────┐         ┌────────────────────────┐
+│  원내 PC (Background)   │  ◄───►  │    Telegram Server     │  ◄───►  │  원장님 스마트폰 (App)   │
+│  [ADK Runner & Bot]    │  (HTTPS)│  (Webhook 없이 Polling) │  (LTE)  │   [텔레그램 채팅방]    │
+└────────────────────────┘         └────────────────────────┘         └────────────────────────┘
+```
+
+### 헤르메스 메신저 브릿지 파이썬 코드 예시
 ```python
 import os
+import time
+import requests
 import asyncio
-from google.adk.agents import Agent
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-# 1. 환경 변수 및 비용 모델 정의
-GEMINI_KEY = os.getenv("GEMINI_API_KEY")
-PRO_MODEL = "gemini-2.5-pro"      # 의사결정 및 오케스트레이션용
-FLASH_MODEL = "gemini-2.5-flash"  # 실무 요원 및 데이터 전처리용
+# 텔레그램 봇 토큰 및 대표님 고유 Chat ID 설정
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN")
+ALLOWED_CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID", "12345678")) # 보안 목적: 지정된 사용자만 차단 필터링
 
-if not GEMINI_KEY:
-    raise ValueError("시스템 환경 변수에 'GEMINI_API_KEY'가 설정되어 있지 않습니다.")
-
-# 2. 방어적 도구 설계
-def retrieve_hospital_billing_summary(treat_date: str) -> dict:
-    """원내 정산 데이터를 안전하게 조회하는 도구.
-    
-    Args:
-        treat_date: 정산 날짜 (YYYY-MM-DD)
-    """
-    import re
-    if not re.match(r"^\d{4}-\d{2}-\d{2}$", treat_date):
-        return {"status": "error", "message": "날짜 형식이 유효하지 않습니다. YYYY-MM-DD 형식을 사용하십시오."}
-    
-    # 정산 데이터 목업 (실 운영 시 pyodbc 또는 pandas 연동)
-    print(f"[Tool] {treat_date} 날짜 정산 데이터 요약 중...")
-    return {
-        "status": "success",
-        "date": treat_date,
-        "total_revenue": 4500000,
-        "ez777_count": 18,
-        "notes": "정상 정산 완료"
+def send_telegram_message(chat_id: int, text: str):
+    """지정된 채팅방으로 마크다운 텍스트 답장을 보냅니다."""
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "Markdown"
     }
+    try:
+        requests.post(url, json=payload, timeout=5)
+    except Exception as e:
+        print(f"[Telegram] 발송 실패: {e}")
 
-# 3. 실무 요원 (Flash 모델 매핑으로 비용 최소화)
-billing_analyst = Agent(
-    name="billing_analyst",
-    model=FLASH_MODEL, # Flash 전담 배정
-    description="정산 데이터를 1차 취합하고 수치를 검증하는 저비용 실무 요원",
-    instruction="""당신은 병원 회계 정산 담당 에이전트입니다.
-    'retrieve_hospital_billing_summary' 도구를 활용하여 정산 정보를 조회한 후 요약 결과를 도출하십시오.
-    도구 실행 실패(error) 시 원인을 분석해 대안 메시지를 작성하십시오.""",
-    tools=[retrieve_hospital_billing_summary]
-)
-
-# 4. 마스터 오케스트레이터 (Pro 모델 매핑으로 정교한 비즈니스 로직 제어)
-hospital_commander = Agent(
-    name="hospital_commander",
-    model=PRO_MODEL, # Pro 전담 배정
-    description="전체 실무 흐름을 관제하고 분석 결과를 조율하는 총괄 팀장",
-    instruction="""당신은 병원 행정 지원 센터의 마스터 오케스트레이터입니다.
-    사용자의 요청이 들어오면 정산 요원(billing_analyst)에게 적절한 작업을 배분하십시오.
-    정산 요원의 보고 내용을 검토하고 최종 보고서 형식으로 사용자가 보기 편하게 마크다운 형태로 가공하십시오.""",
-    sub_agents=[billing_analyst]
-)
-
-# 5. 비동기 실행 및 세션 생명주기 제어
-async def main():
-    # 다중 세션을 안전하게 처리하기 위한 표준 InMemory 서비스 기동
-    session_service = InMemorySessionService()
-    runner = Runner(
-        agent=hospital_commander,
-        app_name="hospital_billing_system",
-        session_service=session_service
-    )
+async def telegram_polling_bridge(runner: Runner, session_service: InMemorySessionService):
+    """텔레그램 메시지를 롱폴링(Long-Polling)으로 수집하여 ADK 에이전트 러너에 포워딩합니다."""
+    print("🚀 헤르메스 텔레그램 메신저 브릿지 기동 완료...")
+    offset = 0
     
-    # 특정 사용자 격리 세션 생성
-    session = await session_service.create_session(
-        app_name="hospital_billing_system",
-        user_id="luca_director"
-    )
+    # 격리된 단일 세션 미리 열어둠 (대화 컨텍스트 유지용)
+    session = await session_service.create_session(app_name="hospital_helper", user_id=str(ALLOWED_CHAT_ID))
     
-    user_query = "2026-05-25일자 우리 병원 정산 현황 뽑아줘"
-    new_message = types.Content(
-        role="user",
-        parts=[types.Part.from_text(text=user_query)]
-    )
-    
-    print(f"💬 사용자 요청: {user_query}")
-    print("🤖 루카 오케스트레이터 분석 및 분배 시작...")
-    
-    async for event in runner.run_async(
-        user_id="luca_director",
-        session_id=session.id,
-        new_message=new_message
-    ):
-        if event.content and event.content.parts:
-            for part in event.content.parts:
-                if hasattr(part, "text") and part.text:
-                    print(part.text, end="", flush=True)
-    print("\n" + "="*80)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={offset}&timeout=10"
+            response = requests.get(url, timeout=12)
+            if response.status_code != 200:
+                await asyncio.sleep(2)
+                continue
+                
+            updates = response.json().get("result", [])
+            for update in updates:
+                offset = update["update_id"] + 1
+                message = update.get("message", {})
+                chat_id = message.get("chat", {}).get("id")
+                user_text = message.get("text", "")
+                
+                # 보안 체크: 허가된 대표님/행정 계정만 제어 허용
+                if chat_id != ALLOWED_CHAT_ID:
+                    send_telegram_message(chat_id, "🚫 접근 권한이 없는 계정입니다.")
+                    continue
+                
+                if not user_text:
+                    continue
+                    
+                print(f"[Telegram 수신]: {user_text}")
+                
+                # ADK 에이전트에 메시지 주입 및 실행
+                new_message = types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text=user_text)]
+                )
+                
+                # 결과 수집
+                full_reply = ""
+                async for event in runner.run_async(
+                    user_id=str(ALLOWED_CHAT_ID),
+                    session_id=session.id,
+                    new_message=new_message
+                ):
+                    if event.content and event.content.parts:
+                        for part in event.content.parts:
+                            if hasattr(part, "text") and part.text:
+                                full_reply += part.text
+                
+                # 텔레그램 채팅방으로 응답 전송
+                send_telegram_message(chat_id, full_reply)
+                
+        except Exception as e:
+            print(f"[Bridge Error] {e}")
+            await asyncio.sleep(3) # 에러 시 쿨다운
 ```
 
 ---
 
+## 🏥 [EMR 실무 플레이북] 3대 병원 자동화 에이전트 시나리오
+
+대표님이 새로운 에이전트를 빌드해 나갈 때, 병원 현장에 즉각 적용하여 큰 비용 효과를 낼 수 있는 대표 실무 시나리오 명세서입니다.
+
+### 시나리오 1: 일일 매출 및 EZ777(보행분석) 통계 브리핑 요원
+- **목적**: 매일 퇴근 전 혹은 출근 길에 당일 정산 매출과 비급여 EZ777 검사 건수를 요약 보고받음.
+- **도구 구성**: `query_sales_database` (직접 DB 연동) 또는 `safely_parse_emr_excel` (당일 다운로드된 엑셀 파싱).
+- **작동 방식**: 대표님이 텔레그램으로 *"오늘 정산 보고"*라고 치면, 오늘 비급여 보행분석 건수, 수가 합계액, 실손청구 삭감 리스크 환자 명단을 분석하여 텔레그램 메시지로 예쁘게 포맷팅해 반환.
+
+### 시나리오 2: 도수치료 삭감 한도 사전 심사 요원 (Claims Cut Audit)
+- **목적**: 5세대 실손보험 도입에 따른 연간 도수치료 횟수 제한(예: 15회 또는 24회 이상 시 관리급여 심사 삭감 리스크)을 예방하기 위해, 한도에 임박한 환자를 자동으로 찾아 경고함.
+- **도구 구성**: 환자의 최근 1년간 내원 기록 및 수가 코드를 조회하는 DB/Excel 전처리 도구.
+- **작동 방식**: EMR 다운로드 디렉토리에 새로운 환자 통계가 감지되면, 도수치료 누적 횟수가 12회를 초과한 환자 명단을 추출해 원장님 텔레그램으로 *"⚠️ [주의] 홍길동 환자 도수치료 13회차 도달 - EZ777 보행분석 결합 필요"* 경고 메시지 자동 발송.
+
+### 시나리오 3: 보험사 실손 소명서 자동 작성 요원 (Appeal Letter Writer)
+- **목적**: 보험사에서 도수치료 청구를 삭감하거나 정밀 심사를 요구할 때 제출할 비급여 소명서(보행 분석 객관적 근거 자료)를 의학적 서식에 맞춰 자동 작성.
+- **도구 구성**: `execute_multimodal_ocr` (원내 스마트 인솔 보행 결과 보고서 캡처 이미지 OCR 판독).
+- **작동 방식**: 스마트 인솔 보행 검사결과지 캡처 이미지를 텔레그램 방에 업로드하며 *"이 환자 소명서 써줘"*라고 요청하면, 이미지를 판독해 **"좌우 족저압 불균형 18% 및 보행 대칭성 붕괴 상태로 보존적 재활 치료의 의학적 필요성이 소명됨"** 등의 완성형 소명서 양식을 생성.
+
+---
+
 ## 🎭 루카(Luca) 본부장의 멘탈 모델 (Mental Model for Luca)
-- **World Best Practice 전파**: 대표님이 새로운 에이전트 빌드를 지시하시면, 본부장 루카는 최우선적으로 위 5대 핵심 설계 원칙(SRP, 방어적 도구, 자가 복구, Pro+Flash 하이브리드, 세션 제어)을 명시하며 구조 설계를 제안해야 합니다.
-- **예외 복구 강조**: 도구 설계 논의 시 *"대표님, 데이터가 누락되거나 EMR 서버 연결이 끊겼을 때 요원이 어떻게 자동 조치할지(자가 복구 매뉴얼)를 프롬프트에 정의해 두어야 오작동이 없습니다"* 라고 조언하여 안정성을 확보하십시오.
+- **헤르메스 연동 선제 제안**: 새로운 에이전트 빌드 요청 시, 화면이 없는 백엔드 전용 시나리오는 대표님께 **"텔레그램 봇으로 연결해서 폰으로 보고받으시겠습니까?"**를 먼저 권장하십시오.
+- **비용 최우선 권장**: 에이전트를 만들고자 할 때 반드시 요금 효율적인 **Pro + Flash 하이브리드 아키텍처**를 기본 설계안으로 대표님께 추천해야 합니다.
+- **안전한 SQL 전파**: DB 방식을 논의할 때, 반드시 **Read-Only(조회 전용) 계정 사용** 및 쿼리 복잡성(운영 DB 성능 영향 최소화)을 검증하도록 경고 지침을 명시합니다.
 - **점진적 상세화**: 한 번에 코드를 다 짜려고 성급히 덤비지 마십시오. API 스펙과 DB 정보가 부족하면 *"대표님, 이 API의 필수 파라미터는 무엇인가요?"* 혹은 *"조회할 테이블의 스키마(컬럼명)를 올려주십시오"* 라고 집요하면서도 정중하게 티키타카를 이끌어가야 합니다.
-- **문서화 지향**: 생성된 에이전트 코드는 가급적 실습 파일(`*.py`) 형태로 워크스페이스에 생성해 두고 대표님이 직접 실행하실 수 있게 경로를 제공하십시오.
