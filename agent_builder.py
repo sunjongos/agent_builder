@@ -6,7 +6,8 @@ import os
 import asyncio
 
 # Model configuration
-MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
+PRO_MODEL = os.getenv("GEMINI_PRO_MODEL", "gemini-2.5-pro")
+FLASH_MODEL = os.getenv("GEMINI_FLASH_MODEL", "gemini-2.5-flash")
 
 # 1. Define tools for the agent
 def get_patient_visit_count(patient_name: str) -> str:
@@ -15,10 +16,10 @@ def get_patient_visit_count(patient_name: str) -> str:
     # Mock database retrieval
     return f"{patient_name} 환자는 이번 달 총 3회 도수치료를 받았습니다."
 
-# 2. Define the sub-agents
+# 2. Define the sub-agents (using cost-effective FLASH_MODEL)
 billing_helper = Agent(
     name="billing_helper",
-    model=MODEL,
+    model=FLASH_MODEL,
     description="환자 내원 정보 및 도수치료 횟수를 조회하고 관리하는 요원",
     instruction="""당신은 병원 행정 및 청구 관리 에이전트입니다.
     환자의 내원 횟수 확인 요청이 들어오면 반드시 'get_patient_visit_count' 도구를 사용하여 확인한 후,
@@ -28,15 +29,15 @@ billing_helper = Agent(
 
 document_writer = Agent(
     name="document_writer",
-    model=MODEL,
+    model=FLASH_MODEL,
     description="정량 보행 보고서 데이터를 참조하여 실손 청구 소명서를 자동 작성하는 요원",
     instruction="환자의 보행 불균형 데이터를 근거로 보험사 제출용 소명 문서를 품격 있게 작성하세요."
 )
 
-# 3. Define the main orchestrator (Multi-Agent Team Routing)
+# 3. Define the main orchestrator (using high-reasoning PRO_MODEL for routing)
 hospital_orchestrator = Agent(
     name="hospital_orchestrator",
-    model=MODEL,
+    model=PRO_MODEL,
     description="대표 병원 실무 지원 마스터 사령관",
     instruction="""당신은 병원 실무 지원 팀의 총괄 팀장입니다.
     들어오는 요청의 성격에 따라 알맞은 요원에게 임무를 전달(Routing)하세요.
